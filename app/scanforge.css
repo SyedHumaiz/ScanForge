@@ -3,6 +3,42 @@
 html,body,.app-shell,.main,.page-content,.loading-screen{background:#f6f8fc;color:#101828}
 body{font-family:Inter,'DM Sans',Arial,sans-serif;font-size:14px}
 button,input,select,textarea{font:inherit}
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),select,textarea,
+.list-search input,.auth-form input,.modal input,.modal select,.modal textarea,
+.settings-form input,.settings-form textarea,.member-add-form input,.member-add-form select,
+.inline-select,.cycle-card-footer select,.modal-fields .code-input{
+  color-scheme:light;
+  background-color:#fff;
+  color:#101828;
+  border-color:#d0d5dd;
+}
+input::placeholder,textarea::placeholder{color:#98a2b3;opacity:1}
+input:not([type="checkbox"]):not([type="radio"]):hover,select:hover,textarea:hover{border-color:#98a2b3}
+input:not([type="checkbox"]):not([type="radio"]):focus,select:focus,textarea:focus{border-color:#4f46e5;outline:3px solid #e0e7ff;outline-offset:1px}
+input:disabled,select:disabled,textarea:disabled{background-color:#f2f4f7;color:#667085;cursor:not-allowed}
+input[type="checkbox"],input[type="radio"]{color-scheme:light;accent-color:#4f46e5}
+.search-trigger input,.list-search input{background-color:transparent;border:0;box-shadow:none}
+.search-trigger input:hover,.list-search input:hover{border:0}
+.search-trigger input:focus,.list-search input:focus{border:0;outline:0}
+.filter-tabs,.multi-picker,.role-pill,.run-confirm-list{background:#f9fafb;color:#344054;border-color:#e4e7ec}
+.cycle-card-footer button,.inline-select,.run-evidence button,.project-menu button,.notification-item{background:#fff;color:#344054;border-color:#e4e7ec}
+.notification-item:hover,.task-card:hover,.cycle-card:hover,.table-wrap tbody tr:hover{background:#f8fafc}
+.auth-alert,.form-alert{background:#fffaeb;color:#93370d;border-color:#fedf89}
+.form-alert.error-alert{background:#fef3f2;color:#b42318;border-color:#fecdca}
+.form-alert.success-alert{background:#ecfdf3;color:#067647;border-color:#abefc6}
+.auth-form label,.modal label,.modal-fields label,.settings-form label,.member-add-form{color:#344054}
+.modal-fields :is(input,select,textarea),.settings-form :is(input,textarea),.member-add-form :is(input,select){background:#fff;color:#101828;border-color:#d0d5dd}
+.modal-fields :is(input,select,textarea):disabled,.settings-form :is(input,textarea):disabled,.member-add-form :is(input,select):disabled{background:#f2f4f7;color:#667085}
+.record-modal .case-picker-field{display:grid;gap:8px;min-width:0}
+.record-modal .case-picker-field>span{color:#344054;font-size:12px;font-weight:650}
+.record-modal .case-picker-field .multi-picker{display:block;max-height:220px;overflow-y:auto;overflow-x:hidden;padding:4px;background:#fff;border:1px solid #d0d5dd;border-radius:9px;scrollbar-width:thin}
+.record-modal .case-picker-field .multi-picker label{display:flex;align-items:center;gap:10px;min-width:0;width:100%;margin:0;padding:10px 9px;border-bottom:1px solid #eaecf0;border-radius:5px;color:#344054;background:#fff;font-size:13px;font-weight:400;line-height:1.4;cursor:pointer}
+.record-modal .case-picker-field .multi-picker label:last-of-type{border-bottom:0}
+.record-modal .case-picker-field .multi-picker label:hover{background:#f8fafc}
+.record-modal .case-picker-field .multi-picker label:focus-within{outline:2px solid #a5b4fc;outline-offset:-2px}
+.record-modal .case-picker-field .multi-picker input[type="checkbox"]{box-sizing:border-box;display:block;flex:0 0 17px;width:17px;height:17px;min-width:17px;min-height:17px;max-width:17px;max-height:17px;margin:0;padding:0;border:1px solid #d0d5dd;border-radius:4px;background:#fff;accent-color:#4f46e5}
+.record-modal .case-picker-field .case-picker-id{flex:0 0 auto;color:#475467;font:650 12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}
+.record-modal .case-picker-field .case-picker-title{min-width:0;flex:1;color:#344054;font-family:Inter,'DM Sans',Arial,sans-serif;font-size:13px;line-height:1.4;white-space:normal;overflow-wrap:anywhere}
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid #818cf8;outline-offset:2px}
 .sidebar{position:fixed;inset:0 auto 0 0;width:254px;height:100dvh;padding:25px 16px 18px;display:flex;flex-direction:column;overflow:visible;background:#fff;color:#344054;border-right:1px solid #e4e7ec}
 .sidebar .brand{height:auto;margin:0 5px 26px;padding:0 0 24px;border-bottom:1px solid #eef0f4;color:#101828;font:800 21px Inter,Arial,sans-serif;letter-spacing:-.9px}
