@@ -175,6 +175,8 @@ body {
 .button { min-height: 38px; font-size: 12px; }
 .nav-item { min-height: 40px; font-size: 13px; }
 .page-heading p, .section-hero p, .section-info p { font-size: 13px; }
+.sidebar { overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+.sidebar-bottom { position: sticky; bottom: 0; padding-top: 10px; background: var(--surface); }
 
 .topbar,
 .sidebar,
@@ -285,7 +287,17 @@ button:focus-visible { outline-color: #68d9b0; }
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
-  .brand, .project-select-wrap, .sidebar-bottom { display: none; }
+  .brand, .project-select-wrap { display: none; }
+  .sidebar-bottom { display: block; margin-top: 8px; }
+  .sidebar-bottom .usage-card,
+  .sidebar-bottom > .nav-item { display: none; }
+  .sidebar-bottom .user-card {
+    display: flex;
+    justify-content: flex-start;
+    padding: 8px 3px;
+  }
+  .sidebar-bottom .user-copy { display: grid; }
+  .sidebar-bottom .user-card > .muted { display: block; }
   .nav-scroll {
     display: flex;
     gap: 8px;
