@@ -257,7 +257,7 @@ try {
     throw new Error(`${detail} Verify that GitHub Actions uses the same Supabase project as the dashboard and that SUPABASE_SERVICE_ROLE_KEY is the current service-role key.`);
   }
   const baseUrl=run.projects?.automation_base_url;
-  if (!baseUrl) throw new Error("Set the automation target URL in TestTrace workspace settings before starting a run.");
+  if (!baseUrl) throw new Error("Set the automation target URL in ScanForge workspace settings before starting a run.");
   const cases=source === "website" ? [] : await rest("test_cases",{query:`?project_id=eq.${encodeURIComponent(projectId)}&id=in.(${caseIds.map(encodeURIComponent).join(",")})&select=*`});
   if(cases.length!==caseIds.length)throw new Error("One or more selected test cases are missing.");
   await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:"running",started_at:new Date().toISOString()},headers:{Prefer:"return=minimal"}});
@@ -267,7 +267,7 @@ try {
     const failed = checks.filter(check => !check.passed && check.severity !== "info").length;
     const warnings = checks.filter(check => !check.passed && check.severity === "info").length;
     await rest("test_results",{method:"POST",body:{run_id:runId,test_case_id:null,status:failed?"failed":"passed",error_message:failed?checks.filter(check=>!check.passed).map(check=>`${check.name}: ${check.detail}`).join(" | "):null,evidence:[]}});
-    const summary={total:checks.length,passed,failed,warnings,checks};
+    const summary={total:checks.length,passed,failed,warnings,target_url:baseUrl,checks};
     await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:failed?"failed":"passed",finished_at:new Date().toISOString(),summary},headers:{Prefer:"return=minimal"}});
     console.info(`[ScanForge runner] Website scan completed total=${summary.total} passed=${summary.passed} failed=${summary.failed} warnings=${summary.warnings}`);
   } else {
