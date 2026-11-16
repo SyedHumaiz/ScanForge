@@ -14,6 +14,35 @@ const source = process.env.AUTOMATION_SOURCE || "playwright";
 const root = process.cwd();
 if (!api || !serviceKey || !runId || !projectId || (source !== "website" && !caseIds.length)) throw new Error("Automation runner configuration is incomplete.");
 
+function getSupabaseConnectionDetails() {
+  let host = "unavailable";
+  let endpointProjectRef = null;
+  try {
+    host = new URL(api).host;
+    endpointProjectRef = new URL(api).hostname.split(".")[0] || null;
+  } catch { /* The request helper will report an invalid endpoint. */ }
+
+  let keyRole = null;
+  let keyProjectRef = null;
+  try {
+    const payload = serviceKey.split(".")[1];
+    const claims = payload ? JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) : null;
+    keyRole = claims?.role || null;
+    keyProjectRef = claims?.ref || null;
+  } catch { /* Support non-JWT Supabase key formats without logging key material. */ }
+
+  return { host, endpointProjectRef, keyRole, keyProjectRef };
+}
+
+const supabaseConnection = getSupabaseConnectionDetails();
+if (supabaseConnection.keyRole && supabaseConnection.keyRole !== "service_role") {
+  throw new Error("SUPABASE_SERVICE_ROLE_KEY is not a service-role key. Configure the GitHub Actions secret with the service-role key from the same Supabase project.");
+}
+if (supabaseConnection.keyProjectRef && supabaseConnection.endpointProjectRef && supabaseConnection.keyProjectRef !== supabaseConnection.endpointProjectRef) {
+  throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY refer to different Supabase projects. Update the GitHub Actions secrets so both use the same project.");
+}
+console.info(`[ScanForge runner] Starting source=${source} run_id=${runId} project_id=${projectId} supabase_host=${supabaseConnection.host} key_role=${supabaseConnection.keyRole || "unavailable"} key_project_ref=${supabaseConnection.keyProjectRef || "unavailable"}`);
+
 async function rest(table, options = {}) {
   const { method = "GET", query = "", body, headers = {} } = options;
   const response = await fetch(`${api}/rest/v1/${table}${query}`, {
@@ -22,7 +51,12 @@ async function rest(table, options = {}) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
-  if (!response.ok) throw new Error(`${table} request failed (${response.status}): ${text.slice(0,500)}`);
+  if (!response.ok) {
+    let errorCode = "unavailable";
+    try { errorCode = JSON.parse(text)?.code || errorCode; } catch { /* Keep response bodies out of workflow logs. */ }
+    console.error(`[ScanForge runner] Supabase request failed table=${table} method=${method} status=${response.status} code=${errorCode}`);
+    throw new Error(`${table} request failed (HTTP ${response.status}, code=${errorCode}).`);
+  }
   return text ? JSON.parse(text) : null;
 }
 
@@ -211,8 +245,17 @@ async function scanWebsite(baseUrl) {
 
 let run;
 try {
-  [run] = await rest("test_runs",{query:`?id=eq.${encodeURIComponent(runId)}&project_id=eq.${encodeURIComponent(projectId)}&select=*,projects(id,automation_base_url),test_results(id)`});
-  if (!run) throw new Error("The selected test run is no longer available.");
+  const matchingRuns = await rest("test_runs",{query:`?id=eq.${encodeURIComponent(runId)}&project_id=eq.${encodeURIComponent(projectId)}&select=*,projects(id,automation_base_url),test_results(id)`});
+  [run] = matchingRuns || [];
+  if (!run) {
+    const visibleRuns = await rest("test_runs",{query:`?id=eq.${encodeURIComponent(runId)}&select=id,project_id`});
+    const visibleRun = visibleRuns?.[0];
+    const detail = visibleRun
+      ? `The run belongs to project_id=${visibleRun.project_id}, but the workflow received project_id=${projectId}.`
+      : "No row with this run ID is visible to the runner.";
+    console.error(`[ScanForge runner] Run lookup failed run_id=${runId} project_id=${projectId} visible_project_id=${visibleRun?.project_id || "none"}`);
+    throw new Error(`${detail} Verify that GitHub Actions uses the same Supabase project as the dashboard and that SUPABASE_SERVICE_ROLE_KEY is the current service-role key.`);
+  }
   const baseUrl=run.projects?.automation_base_url;
   if (!baseUrl) throw new Error("Set the automation target URL in TestTrace workspace settings before starting a run.");
   const cases=source === "website" ? [] : await rest("test_cases",{query:`?project_id=eq.${encodeURIComponent(projectId)}&id=in.(${caseIds.map(encodeURIComponent).join(",")})&select=*`});
@@ -226,7 +269,7 @@ try {
     await rest("test_results",{method:"POST",body:{run_id:runId,test_case_id:null,status:failed?"failed":"passed",error_message:failed?checks.filter(check=>!check.passed).map(check=>`${check.name}: ${check.detail}`).join(" | "):null,evidence:[]}});
     const summary={total:checks.length,passed,failed,warnings,checks};
     await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:failed?"failed":"passed",finished_at:new Date().toISOString(),summary},headers:{Prefer:"return=minimal"}});
-    if(failed)process.exitCode=1;
+    console.info(`[ScanForge runner] Website scan completed total=${summary.total} passed=${summary.passed} failed=${summary.failed} warnings=${summary.warnings}`);
   } else {
   const outcomes=[];
   for(const testCase of cases){
