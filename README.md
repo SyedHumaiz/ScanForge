@@ -1,6 +1,6 @@
-# TestTrace
+# ScanForge
 
-TestTrace brings manual test case management, task assignment, release cycles, browser/API automation, requirements traceability, defects, reports, attachments, and audit history into one workspace.
+ScanForge provides automated website testing, quality analysis, browser/API automation, reports, evidence, and workspace quality management. It is built on the original TestTrace foundation.
 
 ## Local setup
 
@@ -36,11 +36,11 @@ The web app and API deploy to Vercel. The isolated browser/API worker runs as a 
 3. Add these **GitHub Actions repository secrets**:
    - `SUPABASE_URL`: your Supabase project URL.
    - `SUPABASE_SERVICE_ROLE_KEY`: the Supabase service-role key. Keep it secret; never put it in browser code.
-   - `E2E_EMAIL` and `E2E_PASSWORD`: an account in the TestTrace workspace, for the supplied sign-in examples.
+   - `E2E_EMAIL` and `E2E_PASSWORD`: an account in the ScanForge workspace, for the supplied sign-in examples.
 4. Set these **Vercel environment variables** from `.env.example`:
    - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`.
    - `GITHUB_AUTOMATION_OWNER`, `GITHUB_AUTOMATION_REPOSITORY`, `GITHUB_AUTOMATION_TOKEN`, `GITHUB_AUTOMATION_BRANCH`, `GITHUB_AUTOMATION_WORKFLOW`.
-5. In TestTrace **Settings**, set the public HTTPS URL of the application or test target. Add an automated test case with a supported step list, or a Newman collection committed within this repository.
+5. In ScanForge **Settings**, set the public HTTPS URL of the application or test target. Add an automated test case with a supported step list, or a Newman collection committed within this repository.
 
 The sample Newman case checks `/api/health`. The Playwright and Selenium sign-in examples use the `E2E_EMAIL` and `E2E_PASSWORD` GitHub secrets. CI results are written directly to Supabase by the worker; service-role credentials are never sent to the browser.
 

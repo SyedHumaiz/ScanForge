@@ -1,8 +1,8 @@
 {
   "info": {
     "_postman_id": "9c7de1b7-e166-45ad-9064-63cbcc22ea3a",
-    "name": "TestTrace application health",
-    "description": "A small Newman suite for the TestTrace health endpoint.",
+    "name": "ScanForge application health",
+    "description": "A small Newman suite for the ScanForge health endpoint.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
