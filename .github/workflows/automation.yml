@@ -1,14 +1,15 @@
-name: TestTrace automation
+
+name: ScanForge automation
 
 on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: TestTrace run identifier
+        description: ScanForge run identifier
         required: true
         type: string
       project_id:
-        description: TestTrace workspace identifier
+        description: ScanForge workspace identifier
         required: true
         type: string
       test_case_ids:
@@ -30,7 +31,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: testtrace-${{ inputs.run_id }}
+  group: scanforge-${{ inputs.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -38,18 +39,23 @@ jobs:
     name: Run ${{ inputs.source }} suite
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     steps:
       - name: Check out automation collections
         uses: actions/checkout@v4
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
+
       - name: Install application and automation dependencies
         run: npm ci --no-audit --no-fund
+
       - name: Install Chromium
         if: inputs.source == 'playwright' || inputs.source == 'website'
         run: npx playwright install --with-deps chromium
+
       - name: Run selected test cases
         run: node automation/runner.mjs
         env:
