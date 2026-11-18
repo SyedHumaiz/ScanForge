@@ -4,6 +4,7 @@ import { chromium } from "playwright";
 import https from "node:https";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
+import { readFileSync } from "node:fs";
 import { cycleChecks, definitionError, evaluateChecks, executeCycle, inspectHomepage, isPublicAddress, normalizeWebsiteUrl, resolvePublicTarget } from "../lib/cycle-runner.mjs";
 
 test("cycle definitions accept only explicit supported checks", () => {
@@ -37,6 +38,15 @@ test("browser definitions validate actions, selectors, targets, secrets, and lim
   assert.match(error([{ action: "goto", value: "/login", unexpected: true }, steps[4]]), /field/);
   assert.match(error([{ action: "goto", value: "/login" }, { action: "wait", value: "500" }, steps[4]]), /unsupported/);
   assert.match(error(Array.from({ length: 26 }, () => ({ action: "check", value: "page_title" }))), /25/);
+});
+
+test("GitHub Actions forwards every login secret name used by the cycle runner", () => {
+  const workflow = readFileSync(new URL("../.github/workflows/automation.yml", import.meta.url), "utf8");
+  for (const name of ["E2E_EMAIL", "E2E_PASSWORD", "E2E_LOGIN_USER", "E2E_LOGIN_PASSWORD", "E2E_INVALID_PASSWORD", "E2E_UNREGISTERED_USER"]) {
+    assert.ok(workflow.includes(name + ": ${{ secrets." + name + " }}"), `${name} is not forwarded to Node`);
+    const steps = [{ action: "goto", value: "/login" }, { action: "fill", selector: "#field", value: `{{env:${name}}}` }, { action: "expect_visible", selector: "#field" }];
+    assert.equal(definitionError({ automation_type: "playwright", steps }, "https://8.8.8.8"), null);
+  }
 });
 
 test("unsupported cases are skipped without attempting browser execution", async () => {
@@ -164,6 +174,21 @@ test("local login fixture isolates cases and supports login plus logout actions"
     assert.deepEqual(results.map(result => result.status), ["passed", "passed", "passed"], JSON.stringify(results));
     assert.ok(results.every(result => result.evidence.length === 0));
     assert.ok(!JSON.stringify(results).includes(secret));
+  });
+});
+
+test("cycle runner resolves all four new login references without persisting values", async () => {
+  const names = ["E2E_LOGIN_USER", "E2E_LOGIN_PASSWORD", "E2E_INVALID_PASSWORD", "E2E_UNREGISTERED_USER"];
+  const values = Object.fromEntries(names.map(name => [name, crypto.randomUUID()]));
+  const html = '<form id="login"><input id="user"><input id="password"><input id="invalid"><input id="unregistered"><button id="submit">Submit</button></form><div id="state"></div><script>document.querySelector("#login").onsubmit=e=>{e.preventDefault();document.querySelector("#state").textContent=["#user","#password","#invalid","#unregistered"].every(s=>document.querySelector(s).value)?"Ready":"Missing"}</script>';
+  await withWebsiteFixture({ status: 200, body: html }, async () => {
+    const steps = [{ action: "goto", value: "/login" },
+      ...names.map((name, index) => ({ action: "fill", selector: ["#user", "#password", "#invalid", "#unregistered"][index], value: `{{env:${name}}}` })),
+      { action: "click", selector: "#submit" }, { action: "expect_text", selector: "#state", value: "Ready" }];
+    const [result] = await executeCycle([{ id: "named-secrets", automation_type: "playwright", steps }], "https://8.8.8.8", { resolveSecret: name => values[name] });
+    assert.equal(result.status, "passed", result.error_message);
+    assert.deepEqual(result.evidence, []);
+    for (const value of Object.values(values)) assert.ok(!JSON.stringify(result).includes(value));
   });
 });
 
