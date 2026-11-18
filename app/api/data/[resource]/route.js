@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { resolveNewTestCaseId, testCaseWriteError } from "@/lib/test-case-id.mjs";
 
 export const dynamic = "force-dynamic";
 const resources = {
@@ -48,7 +49,8 @@ export async function POST(request, { params }) {
     const { supabase, user, error } = await authorize(request, body.project_id);
     if (error) return error;
     const row = { ...pick(body, config.fields), project_id: body.project_id, created_by: user.id };
-    if (config.prefix) row.key = newKey(config.prefix);
+    if (resource === "test-cases") row.key = resolveNewTestCaseId(body.key, () => newKey("TC"));
+    else if (config.prefix) row.key = newKey(config.prefix);
     if (resource === "test-cases") row.steps = Array.isArray(row.steps) ? row.steps : [];
     if (resource === "cycles") row.status = row.status || "planned";
     const { data, error: dbError } = await supabase.from(config.table).insert(row).select("*").single();
@@ -65,6 +67,7 @@ export async function POST(request, { params }) {
     }
     return NextResponse.json({ item: data }, { status: 201 });
   } catch (error) {
+    if (resource === "test-cases") { const issue = testCaseWriteError(error); return jsonError(issue.message, issue.status); }
     return jsonError(error.message || "Unable to create record.", 400);
   }
 }

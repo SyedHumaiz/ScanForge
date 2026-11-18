@@ -78,6 +78,7 @@ const resolveValue = value => String(value ?? "").replace(/\{\{env:([A-Z0-9_]+)\
 });
 
 async function runPlaywright(testCase, baseUrl) {
+  const hasRunnerSecrets = (testCase.steps || []).some(step => /\{\{env:E2E_[A-Z0-9_]+\}\}/.test(String(step.value || "")));
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   try {
@@ -103,6 +104,7 @@ async function runPlaywright(testCase, baseUrl) {
     }
     return { passed: true, screenshot: null };
   } catch (error) {
+    if (hasRunnerSecrets) return { passed: false, error: "Browser action failed. Check the target, selectors, and runner secrets.", screenshot: null };
     let screenshot = null;
     try { screenshot = await page.screenshot({ fullPage: true }); } catch { /* Keep the original execution failure. */ }
     return { passed: false, error: error.message, screenshot };
@@ -272,7 +274,7 @@ try {
     await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:failed?"failed":"passed",finished_at:new Date().toISOString(),summary},headers:{Prefer:"return=minimal"}});
     console.info(`[ScanForge runner] Website scan completed total=${summary.total} passed=${summary.passed} failed=${summary.failed} warnings=${summary.warnings}`);
   } else if (source === "cycle") {
-    const results = await executeCycle(cases, baseUrl);
+    const results = await executeCycle(cases, baseUrl, { resolveSecret: name => process.env[name] });
     await rest("test_results",{method:"POST",body:results.map(result=>({...result,run_id:runId}))});
     const summary={execution:"local_cycle",target_url:baseUrl,total:results.length,passed:results.filter(x=>x.status==="passed").length,failed:results.filter(x=>x.status==="failed").length,skipped:results.filter(x=>x.status==="skipped").length,duration_ms:Date.now()-new Date(run.started_at||Date.now()).getTime()};
     await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:summary.failed||summary.skipped?"failed":"passed",finished_at:new Date().toISOString(),summary},headers:{Prefer:"return=minimal"}});

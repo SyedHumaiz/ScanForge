@@ -14,6 +14,31 @@ test("cycle definitions accept only explicit supported checks", () => {
   assert.match(definitionError({ automation_type: "manual", steps: [{ action: "check", value: "page_title" }] }), /Playwright/);
 });
 
+test("browser definitions validate actions, selectors, targets, secrets, and limits", () => {
+  const steps = [
+    { action: "goto", value: "/login" },
+    { action: "fill", selector: "#email", value: "{{env:E2E_EMAIL}}" },
+    { action: "fill", selector: "#password", value: "{{env:E2E_PASSWORD}}" },
+    { action: "click", selector: "#sign-in" },
+    { action: "expect_text", selector: "#state", value: "Signed in" },
+    { action: "expect_url", value: "/login" },
+    { action: "expect_visible", selector: "#logout" },
+  ];
+  const error = candidate => definitionError({ automation_type: "playwright", steps: candidate }, "https://8.8.8.8/");
+  assert.equal(error(steps), null);
+  assert.match(error([{ action: "goto", value: "/login" }]), /assertion/);
+  assert.match(error([{ action: "goto", value: "http:\/\/127.0.0.1\/" }, steps[4]]), /public website/);
+  assert.match(error([{ action: "goto", value: "https:\/\/other.example\/" }, steps[4]]), /public website/);
+  assert.match(error([{ action: "goto", value: "/login" }, { action: "click", selector: "" }, steps[4]]), /selector/);
+  assert.match(error([{ action: "goto", value: "/login" }, { action: "expect_text", value: "" }]), /nonempty/);
+  assert.match(error([{ action: "goto", value: "/login" }, { action: "fill", selector: "#password", value: "literal-password" }, steps[4]]), /runner secret/);
+  assert.match(error([{ action: "goto", value: "/login" }, { action: "fill", selector: "#password", value: "{{env:OTHER}}" }, steps[4]]), /runner secret/);
+  assert.match(error([{ action: "goto", value: "/login" }, { action: "click", selector: "#sign-in", timeout: 50000 }, steps[4]]), /timeout/);
+  assert.match(error([{ action: "goto", value: "/login", unexpected: true }, steps[4]]), /field/);
+  assert.match(error([{ action: "goto", value: "/login" }, { action: "wait", value: "500" }, steps[4]]), /unsupported/);
+  assert.match(error(Array.from({ length: 26 }, () => ({ action: "check", value: "page_title" }))), /25/);
+});
+
 test("unsupported cases are skipped without attempting browser execution", async () => {
   const results = await executeCycle([
     { id: "manual", automation_type: "manual", steps: [] },
@@ -111,7 +136,75 @@ test("full Chromium cycle executes only assigned definitions and aggregates mult
     ], "https://8.8.8.8");
     assert.deepEqual(results.map(result => [result.test_case_id, result.status]), [["pass", "passed"], ["fail", "failed"], ["manual", "skipped"]]);
     assert.match(results[1].error_message, /viewport/);
+    assert.equal(requests(), 2);
+  });
+});
+
+test("local login fixture isolates cases and supports login plus logout actions", async () => {
+  const secret = crypto.randomUUID();
+  const html = `<title>Local login fixture</title><form id="login"><input id="email"><input id="password" type="password"><button id="sign-in">Sign In</button></form><button id="logout" type="button">Log Out</button><div id="state"></div><script>
+    const state=document.querySelector('#state');
+    state.textContent=localStorage.getItem('authenticated')?'Signed in':'Signed out';
+    document.querySelector('#login').onsubmit=event=>{event.preventDefault();if(document.querySelector('#email').value&&document.querySelector('#password').value){localStorage.setItem('authenticated','yes');state.textContent='Signed in'}};
+    document.querySelector('#logout').onclick=()=>{localStorage.removeItem('authenticated');state.textContent='Signed out'};
+  </script>`;
+  const signIn = [
+    { action: "goto", value: "/login" },
+    { action: "fill", selector: "#email", value: "{{env:E2E_EMAIL}}" },
+    { action: "fill", selector: "#password", value: "{{env:E2E_PASSWORD}}" },
+    { action: "click", selector: "#sign-in" },
+    { action: "expect_text", selector: "#state", value: "Signed in" },
+  ];
+  await withWebsiteFixture({ status: 200, body: html }, async () => {
+    const results = await executeCycle([
+      { id: "sign-in", automation_type: "playwright", steps: signIn },
+      { id: "isolated", automation_type: "playwright", steps: [{ action: "goto", value: "/login" }, { action: "expect_text", selector: "#state", value: "Signed out" }] },
+      { id: "logout", automation_type: "playwright", steps: [...signIn, { action: "click", selector: "#logout" }, { action: "expect_text", selector: "#state", value: "Signed out" }] },
+    ], "https://8.8.8.8", { resolveSecret: name => ({ E2E_EMAIL: "fixture@example.com", E2E_PASSWORD: secret })[name] });
+    assert.deepEqual(results.map(result => result.status), ["passed", "passed", "passed"], JSON.stringify(results));
+    assert.ok(results.every(result => result.evidence.length === 0));
+    assert.ok(!JSON.stringify(results).includes(secret));
+  });
+});
+
+test("action navigation to private destinations is rejected without connecting", async () => {
+  await withWebsiteFixture({ status: 200, body: '<a id="private" href="http://127.0.0.1:8088/">Private</a>' }, async requests => {
+    const results = await executeCycle([{ id: "private", automation_type: "playwright", steps: [
+      { action: "goto", value: "/login" }, { action: "click", selector: "#private" }, { action: "expect_visible", selector: "body" },
+    ] }], "https://8.8.8.8");
+    assert.equal(results[0].status, "failed");
+    assert.match(results[0].error_message, /Browser step/);
     assert.equal(requests(), 1);
+  });
+});
+
+test("browser actions follow a public form redirect and verify the final URL", async () => {
+  const paths = [];
+  await withWebsiteFixture(url => {
+    paths.push(url.pathname);
+    if (url.pathname === "/login") return { status: 200, body: '<form action="/session" method="post"><button id="sign-in">Sign In</button></form>' };
+    if (url.pathname === "/session") return { status: 302, headers: { location: "/dashboard" } };
+    return { status: 200, body: '<title>Dashboard</title><div id="account">Signed in</div>' };
+  }, async () => {
+    const [result] = await executeCycle([{ id: "redirect-login", automation_type: "playwright", steps: [
+      { action: "goto", value: "/login" }, { action: "click", selector: "#sign-in" },
+      { action: "expect_url", value: "/dashboard" }, { action: "expect_visible", selector: "#account" },
+    ] }], "https://8.8.8.8");
+    assert.equal(result.status, "passed", result.error_message);
+    assert.deepEqual(paths, ["/login", "/session", "/dashboard"]);
+  });
+});
+
+test("missing secrets and Playwright errors are redacted from results", async () => {
+  const secret = crypto.randomUUID();
+  await withWebsiteFixture({ status: 200, body: '<input id="password" type="password">' }, async () => {
+    const steps = [{ action: "goto", value: "/login" }, { action: "fill", selector: "#password", value: "{{env:E2E_PASSWORD}}" }, { action: "click", selector: "#missing", timeout: 200 }, { action: "expect_visible", selector: "body" }];
+    const [failed] = await executeCycle([{ id: "failed", automation_type: "playwright", steps }], "https://8.8.8.8", { resolveSecret: name => name === "E2E_PASSWORD" ? secret : undefined });
+    const [unavailable] = await executeCycle([{ id: "unavailable", automation_type: "playwright", steps }], "https://8.8.8.8");
+    assert.equal(failed.status, "failed");
+    assert.equal(unavailable.status, "failed");
+    assert.ok(!JSON.stringify([failed, unavailable]).includes(secret));
+    assert.deepEqual(failed.evidence, []);
   });
 });
 
