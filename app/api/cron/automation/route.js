@@ -20,6 +20,9 @@ export async function GET(request){
   const owner=process.env.GITHUB_AUTOMATION_OWNER;const repository=process.env.GITHUB_AUTOMATION_REPOSITORY;const token=process.env.GITHUB_AUTOMATION_TOKEN;
   if(!url||!service||!owner||!repository||!token)return NextResponse.json({error:"Scheduled automation connections are incomplete."},{status:503});
   const admin=createClient(url,service,{auth:{persistSession:false,autoRefreshToken:false}});
+  // Clear payloads for workflows that never started; the runner deletes normal runs.
+  const {error:cleanupError}=await admin.from("run_login_configs").delete().lt("expires_at",new Date().toISOString());
+  if(cleanupError && cleanupError.code!=="42P01") return NextResponse.json({error:"Could not clean up expired run configurations."},{status:500});
   const {data:projects,error:projectError}=await admin.from("projects").select("id,automation_base_url").eq("automation_schedule_enabled",true).not("automation_base_url","is",null).limit(20);
   if(projectError)return NextResponse.json({error:projectError.message},{status:500});
   const workflow=process.env.GITHUB_AUTOMATION_WORKFLOW||"automation.yml";const outcomes=[];

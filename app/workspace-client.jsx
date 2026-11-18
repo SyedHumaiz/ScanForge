@@ -89,6 +89,7 @@ function CasesPage({data,query,openModal,executeCase,updateItem,deleteItem}){
 
 function CyclesPage({data,openModal,updateItem,deleteItem,refresh,watchRun}) {
   const [urls,setUrls]=useState({});
+  const [loginConfigs,setLoginConfigs]=useState({});
   const [running,setRunning]=useState({});
   const [errors,setErrors]=useState({});
   const [completed,setCompleted]=useState({});
@@ -99,9 +100,10 @@ function CyclesPage({data,openModal,updateItem,deleteItem,refresh,watchRun}) {
     setRunning(old=>({...old,[cycle.id]:true}));
     setErrors(old=>({...old,[cycle.id]:""}));
     try {
-      const response=await fetch("/api/cycles/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({projectId:data.project.id,cycleId:cycle.id,websiteUrl:urls[cycle.id]||""})});
+      const response=await fetch("/api/cycles/run",{method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store",body:JSON.stringify({projectId:data.project.id,cycleId:cycle.id,websiteUrl:urls[cycle.id]||"",loginConfig:loginConfigs[cycle.id]||{}})});
       const result=await response.json();
       if(!response.ok)throw new Error(result.error||"Could not execute this cycle.");
+      setLoginConfigs(old=>({...old,[cycle.id]:{}}));
       setCompleted(old=>({...old,[cycle.id]:result.run}));
       pollStops.current[cycle.id]?.();
       pollStops.current[cycle.id]=watchRun(result.run.id, {
@@ -144,6 +146,9 @@ function CyclesPage({data,openModal,updateItem,deleteItem,refresh,watchRun}) {
         <form className="cycle-run-form" onSubmit={event=>{event.preventDefault();runCycle(cycle)}}>
           <label htmlFor={"cycle-url-"+cycle.id}>Target Website URL</label>
           <input id={"cycle-url-"+cycle.id} type="url" placeholder="https://example.com" required value={urls[cycle.id]??""} onChange={event=>setUrls(old=>({...old,[cycle.id]:event.target.value}))}/>
+          <details className="cycle-login-config"><summary>Login Test Configuration</summary><p>Enter credentials for this run only. Required fields depend on the assigned login cases.</p>
+            {[["validUsername","Valid username/email","text"],["validPassword","Valid password","password"],["invalidUsername","Invalid username/email","text"],["invalidPassword","Invalid password","password"]].map(([field,label,type])=><label key={field}>{label}<input type={type} autoComplete={type==="password"?"new-password":"off"} value={loginConfigs[cycle.id]?.[field]||""} onChange={event=>setLoginConfigs(old=>({...old,[cycle.id]:{...old[cycle.id],[field]:event.target.value}}))}/></label>)}
+          </details>
           <Button type="submit" disabled={active||!ids.size}>{active?<LoaderCircle size={15} className="cycle-spinner"/>:<Play size={15}/>} {active?"Running cycle…":"Run Cycle"}</Button>
           <small>Runs only assigned, supported Playwright checks through the GitHub Actions runner. Manual cases appear as Not Automated.</small>
         </form>

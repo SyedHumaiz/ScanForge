@@ -5,6 +5,7 @@ import { Builder, Browser, By, Key } from "selenium-webdriver";
 import chrome from "selenium-webdriver/chrome.js";
 import newman from "newman";
 import { executeCycle } from "../lib/cycle-runner.mjs";
+import { decryptLoginConfig, loginSecretValues } from "../lib/run-login-config.mjs";
 
 const api = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -247,6 +248,7 @@ async function scanWebsite(baseUrl) {
 }
 
 let run;
+let hasRunLoginConfig = false;
 try {
   const matchingRuns = await rest("test_runs",{query:`?id=eq.${encodeURIComponent(runId)}&project_id=eq.${encodeURIComponent(projectId)}&select=*,projects(id,automation_base_url),test_results(id)`});
   [run] = matchingRuns || [];
@@ -263,6 +265,17 @@ try {
   if (!baseUrl) throw new Error("Set the automation target URL in ScanForge workspace settings before starting a run.");
   const cases=source === "website" ? [] : await rest("test_cases",{query:`?project_id=eq.${encodeURIComponent(projectId)}&id=in.(${caseIds.map(encodeURIComponent).join(",")})&select=*`});
   if(cases.length!==caseIds.length)throw new Error("One or more selected test cases are missing.");
+  let runSecrets = {};
+  if (source === "cycle") {
+    const configs = await rest("run_login_configs", { query: `?run_id=eq.${encodeURIComponent(runId)}&project_id=eq.${encodeURIComponent(projectId)}&select=ciphertext,expires_at` });
+    if (configs.length) {
+      hasRunLoginConfig = true;
+      if (!process.env.RUN_CONFIG_ENCRYPTION_KEY) throw new Error("RUN_CONFIG_ENCRYPTION_KEY is missing from GitHub Actions secrets.");
+      const config = decryptLoginConfig(configs[0].ciphertext, { runId, projectId, expiresAt: configs[0].expires_at }, process.env.RUN_CONFIG_ENCRYPTION_KEY);
+      runSecrets = loginSecretValues(config);
+    }
+    else if (run.summary?.uses_run_login_config) throw new Error("This run's login configuration is unavailable or expired.");
+  }
   await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:"running",started_at:new Date().toISOString()},headers:{Prefer:"return=minimal"}});
   if (source === "website") {
     const checks = await scanWebsite(baseUrl);
@@ -274,7 +287,7 @@ try {
     await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:failed?"failed":"passed",finished_at:new Date().toISOString(),summary},headers:{Prefer:"return=minimal"}});
     console.info(`[ScanForge runner] Website scan completed total=${summary.total} passed=${summary.passed} failed=${summary.failed} warnings=${summary.warnings}`);
   } else if (source === "cycle") {
-    const results = await executeCycle(cases, baseUrl, { resolveSecret: name => process.env[name] });
+    const results = await executeCycle(cases, baseUrl, { resolveSecret: name => runSecrets[name] || process.env[name] });
     await rest("test_results",{method:"POST",body:results.map(result=>({...result,run_id:runId}))});
     const summary={execution:"local_cycle",target_url:baseUrl,total:results.length,passed:results.filter(x=>x.status==="passed").length,failed:results.filter(x=>x.status==="failed").length,skipped:results.filter(x=>x.status==="skipped").length,duration_ms:Date.now()-new Date(run.started_at||Date.now()).getTime()};
     await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:summary.failed||summary.skipped?"failed":"passed",finished_at:new Date().toISOString(),summary},headers:{Prefer:"return=minimal"}});
@@ -302,7 +315,11 @@ try {
   if(summary.failed)process.exitCode=1;
   }
 }catch(error){
-  console.error(error);
-  if(run?.id)try{await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:"failed",finished_at:new Date().toISOString(),summary:{error:error.message}},headers:{Prefer:"return=minimal"}})}catch(updateError){console.error("Could not store runner failure:",updateError.message)}
+  const message = source === "cycle" ? "Cycle runner failed. Check configuration and workflow logs." : error.message;
+  console.error(`[ScanForge runner] ${message}`);
+  if(run?.id)try{await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:"failed",finished_at:new Date().toISOString(),summary:{error:message}},headers:{Prefer:"return=minimal"}})}catch(updateError){console.error("Could not store runner failure:",updateError.message)}
   process.exitCode=1;
+} finally {
+  if (hasRunLoginConfig) try { await rest("run_login_configs", { method: "DELETE", query: `?run_id=eq.${encodeURIComponent(runId)}&project_id=eq.${encodeURIComponent(projectId)}`, headers: { Prefer: "return=minimal" } }); }
+  catch { console.error("[ScanForge runner] Could not delete run login configuration; it remains unusable after expiry."); }
 }

@@ -66,6 +66,7 @@ jobs:
           AUTOMATION_SOURCE: ${{ inputs.source }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RUN_CONFIG_ENCRYPTION_KEY: ${{ secrets.RUN_CONFIG_ENCRYPTION_KEY }}
           E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
           E2E_LOGIN_USER: ${{ secrets.E2E_LOGIN_USER }}
