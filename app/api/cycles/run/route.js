@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { executeCycle, normalizeWebsiteUrl, resolvePublicTarget } from "@/lib/cycle-runner.mjs";
+import { normalizeWebsiteUrl, resolvePublicTarget } from "@/lib/cycle-runner.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const fail = (error, status = 400) => NextResponse.json({ error }, { status });
 
 export async function POST(request) {
-  if (process.env.NODE_ENV !== "development" || process.env.VERCEL) return fail("Custom cycle execution is available only in local development (npm run dev).", 403);
   let supabase;
   let run;
   try {
@@ -35,30 +34,30 @@ export async function POST(request) {
       websiteUrl = normalizeWebsiteUrl(body.websiteUrl);
       await resolvePublicTarget(websiteUrl);
     } catch (error) { return fail(error.message); }
+    const owner = process.env.GITHUB_AUTOMATION_OWNER;
+    const repository = process.env.GITHUB_AUTOMATION_REPOSITORY;
+    const token = process.env.GITHUB_AUTOMATION_TOKEN;
+    if (!owner || !repository || !token) return fail("The GitHub Actions automation runner has not been configured.", 503);
+    const workflow = process.env.GITHUB_AUTOMATION_WORKFLOW || "automation.yml";
+    const branch = process.env.GITHUB_AUTOMATION_BRANCH || "main";
     const started = Date.now();
     const { data: inserted, error: insertError } = await supabase.from("test_runs").insert({
       project_id: body.projectId, cycle_id: cycle.id, triggered_by: user.id,
-      source: "playwright", status: "running", started_at: new Date(started).toISOString(),
-      summary: { execution: "local_cycle", target_url: websiteUrl, total: cases.length },
+      source: "playwright", status: "queued", branch, started_at: null,
+      summary: { execution: "local_cycle", target_url: websiteUrl, total: cases.length, passed: 0, failed: 0, skipped: 0 },
     }).select("*").single();
     if (insertError) throw insertError;
     run = inserted;
-    const results = await executeCycle(cases, websiteUrl);
-    const { error: resultError } = await supabase.from("test_results").insert(results.map(result => ({ ...result, run_id: run.id })));
-    if (resultError) throw resultError;
-    const summary = {
-      execution: "local_cycle", target_url: websiteUrl, total: results.length,
-      passed: results.filter(result => result.status === "passed").length,
-      failed: results.filter(result => result.status === "failed").length,
-      skipped: results.filter(result => result.status === "skipped").length,
-      duration_ms: Date.now() - started,
-    };
-    const { data: finished, error: finishError } = await supabase.from("test_runs").update({
-      status: summary.passed === summary.total ? "passed" : "failed",
-      finished_at: new Date().toISOString(), summary,
-    }).eq("id", run.id).select("*,test_results(*,test_cases(key,title))").single();
-    if (finishError) throw finishError;
-    return NextResponse.json({ run: finished }, { status: 201 });
+    const response = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: branch, inputs: { run_id: run.id, project_id: body.projectId, test_case_ids: ids.join(","), source: "cycle" } }),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      await supabase.from("test_runs").update({ status: "failed", finished_at: new Date().toISOString(), summary: { ...run.summary, error: `Runner dispatch failed (${response.status})` } }).eq("id", run.id);
+      return fail(`Could not start the GitHub Actions runner (${response.status}). ${detail.slice(0,180)}`, 502);
+    }
+    return NextResponse.json({ run }, { status: 202 });
   } catch (error) {
     if (run) {
       await supabase.from("test_runs").update({ status: "failed", finished_at: new Date().toISOString(), summary: { ...run.summary, error: error.message } }).eq("id", run.id);

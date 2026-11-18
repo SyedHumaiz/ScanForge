@@ -92,7 +92,6 @@ function CyclesPage({data,openModal,updateItem,deleteItem,refresh}) {
   const [errors,setErrors]=useState({});
   const [completed,setCompleted]=useState({});
   const [reportBusy,setReportBusy]=useState({});
-  const localExecution=process.env.NODE_ENV==="development";
   async function runCycle(cycle) {
     setRunning(old=>({...old,[cycle.id]:true}));
     setErrors(old=>({...old,[cycle.id]:""}));
@@ -131,8 +130,8 @@ function CyclesPage({data,openModal,updateItem,deleteItem,refresh}) {
         <form className="cycle-run-form" onSubmit={event=>{event.preventDefault();runCycle(cycle)}}>
           <label htmlFor={"cycle-url-"+cycle.id}>Target Website URL</label>
           <input id={"cycle-url-"+cycle.id} type="url" placeholder="https://example.com" required value={urls[cycle.id]??""} onChange={event=>setUrls(old=>({...old,[cycle.id]:event.target.value}))}/>
-          <Button type="submit" disabled={!localExecution||active||!ids.size}>{active?<LoaderCircle size={15} className="cycle-spinner"/>:<Play size={15}/>} {active?"Running cycle…":"Run Cycle"}</Button>
-          <small>{localExecution?"Runs only assigned, supported Playwright checks. Manual cases appear as Not Automated.":"Run cycles locally with npm run dev."}</small>
+          <Button type="submit" disabled={active||!ids.size}>{active?<LoaderCircle size={15} className="cycle-spinner"/>:<Play size={15}/>} {active?"Running cycle…":"Run Cycle"}</Button>
+          <small>Runs only assigned, supported Playwright checks through the GitHub Actions runner. Manual cases appear as Not Automated.</small>
         </form>
         {errors[cycle.id]&&<p className="cycle-run-error" role="alert">{errors[cycle.id]}</p>}
         {latest?<section className="cycle-run-results" aria-live="polite">

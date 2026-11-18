@@ -26,6 +26,7 @@ on:
           - selenium
           - newman
           - website
+          - cycle
 
 permissions:
   contents: read
@@ -53,7 +54,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Install Chromium
-        if: inputs.source == 'playwright' || inputs.source == 'website'
+        if: inputs.source == 'playwright' || inputs.source == 'website' || inputs.source == 'cycle'
         run: npx playwright install --with-deps chromium
 
       - name: Run selected test cases
