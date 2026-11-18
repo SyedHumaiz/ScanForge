@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { normalizeWebsiteUrl, resolvePublicTarget } from "@/lib/cycle-runner.mjs";
+import { createClient } from "@supabase/supabase-js";
+import { encryptLoginConfig, LOGIN_CONFIG_TTL_MS, validateLoginConfig } from "@/lib/run-login-config.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +11,7 @@ const fail = (error, status = 400) => NextResponse.json({ error }, { status });
 export async function POST(request) {
   let supabase;
   let run;
+  let privateDb;
   try {
     supabase = await createSupabaseServerClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -29,6 +32,9 @@ export async function POST(request) {
     const { data: cases, error: caseError } = await supabase.from("test_cases").select("id,title,automation_type,steps").eq("project_id", body.projectId).in("id", ids);
     if (caseError) throw caseError;
     if (cases.length !== ids.length) return fail("Some assigned cases are unavailable in this workspace.", 403);
+    let loginConfig;
+    try { loginConfig = validateLoginConfig(cases, body.loginConfig); }
+    catch (error) { return fail(error.message); }
     let websiteUrl;
     try {
       websiteUrl = normalizeWebsiteUrl(body.websiteUrl);
@@ -38,30 +44,41 @@ export async function POST(request) {
     const repository = process.env.GITHUB_AUTOMATION_REPOSITORY;
     const token = process.env.GITHUB_AUTOMATION_TOKEN;
     if (!owner || !repository || !token) return fail("The GitHub Actions automation runner has not been configured.", 503);
+    if (Object.keys(loginConfig).length) {
+      if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !process.env.RUN_CONFIG_ENCRYPTION_KEY) return fail("Per-run login configuration is not configured on the server.", 503);
+      privateDb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+    }
     const workflow = process.env.GITHUB_AUTOMATION_WORKFLOW || "automation.yml";
     const branch = process.env.GITHUB_AUTOMATION_BRANCH || "main";
     const started = Date.now();
     const { data: inserted, error: insertError } = await supabase.from("test_runs").insert({
       project_id: body.projectId, cycle_id: cycle.id, triggered_by: user.id,
       source: "playwright", status: "queued", branch, started_at: null,
-      summary: { execution: "local_cycle", target_url: websiteUrl, total: cases.length, passed: 0, failed: 0, skipped: 0 },
-    }).select("*").single();
+      summary: { execution: "local_cycle", target_url: websiteUrl, uses_run_login_config: Object.keys(loginConfig).length > 0, total: cases.length, passed: 0, failed: 0, skipped: 0 },
+    }).select("id,project_id,cycle_id,source,status,branch,summary,created_at").single();
     if (insertError) throw insertError;
     run = inserted;
+    if (Object.keys(loginConfig).length) {
+      const expiresAt = new Date(Date.now() + LOGIN_CONFIG_TTL_MS).toISOString();
+      const ciphertext = encryptLoginConfig(loginConfig, { runId: run.id, projectId: body.projectId, expiresAt }, process.env.RUN_CONFIG_ENCRYPTION_KEY);
+      const { error: configError } = await privateDb.from("run_login_configs").insert({ run_id: run.id, project_id: body.projectId, expires_at: expiresAt, ciphertext });
+      if (configError) throw new Error("Could not securely store this run's login configuration. Apply the database migration and check the service role key.");
+    }
     const response = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, {
       method: "POST", headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json" },
       body: JSON.stringify({ ref: branch, inputs: { run_id: run.id, project_id: body.projectId, test_case_ids: ids.join(","), source: "cycle" } }),
     });
     if (!response.ok) {
-      const detail = await response.text();
+      if (privateDb) await privateDb.from("run_login_configs").delete().eq("run_id", run.id);
       await supabase.from("test_runs").update({ status: "failed", finished_at: new Date().toISOString(), summary: { ...run.summary, error: `Runner dispatch failed (${response.status})` } }).eq("id", run.id);
-      return fail(`Could not start the GitHub Actions runner (${response.status}). ${detail.slice(0,180)}`, 502);
+      return fail(`Could not start the GitHub Actions runner (${response.status}).`, 502);
     }
     return NextResponse.json({ run }, { status: 202 });
   } catch (error) {
     if (run) {
-      await supabase.from("test_runs").update({ status: "failed", finished_at: new Date().toISOString(), summary: { ...run.summary, error: error.message } }).eq("id", run.id);
+      if (privateDb) await privateDb.from("run_login_configs").delete().eq("run_id", run.id);
+      await supabase.from("test_runs").update({ status: "failed", finished_at: new Date().toISOString(), summary: { ...run.summary, error: "Cycle dispatch failed." } }).eq("id", run.id);
     }
-    return fail(error.message || "Unable to execute this test cycle.", 500);
+    return fail("Unable to securely start this test cycle. Check runner configuration.", 500);
   }
 }
