@@ -124,8 +124,8 @@ async function withWebsiteFixture(response, run) {
     const outgoing = new EventEmitter();
     outgoing.setTimeout = () => outgoing;
     outgoing.destroy = error => outgoing.emit("error", error);
-    outgoing.end = () => queueMicrotask(() => {
-      const fixture = typeof response === "function" ? response(url) : response;
+    outgoing.end = body => queueMicrotask(() => {
+      const fixture = typeof response === "function" ? response(url, options, body) : response;
       const incoming = Readable.from([Buffer.from(fixture.body || "")]);
       incoming.statusCode = fixture.status;
       incoming.headers = { "content-type": "text/html", ...fixture.headers };
@@ -147,6 +147,39 @@ test("full Chromium cycle executes only assigned definitions and aggregates mult
     assert.deepEqual(results.map(result => [result.test_case_id, result.status]), [["pass", "passed"], ["fail", "failed"], ["manual", "skipped"]]);
     assert.match(results[1].error_message, /viewport/);
     assert.equal(requests(), 2);
+  });
+});
+
+test("login redirects carry updated session cookies to assertions and logout", async () => {
+  const user = crypto.randomUUID(), password = crypto.randomUUID();
+  const paths = [];
+  await withWebsiteFixture((url, options, body) => {
+    paths.push(url.pathname);
+    const cookie = options.headers.cookie || "";
+    if (url.pathname === "/login") return { status: 200, headers: cookie ? {} : { "set-cookie": "rack.session=before; Path=/" }, body: `<form action="/authenticate" method="post"><input name="username" id="username"><input name="password" id="password"><button id="sign-in">Sign In</button></form>${cookie.includes("rack.session=error") ? '<div id="flash">Your password is invalid!</div>' : cookie.includes("rack.session=loggedout") ? '<div id="flash">You logged out!</div>' : ""}` };
+    if (url.pathname === "/authenticate") {
+      const fields = new URLSearchParams(body.toString());
+      const valid = fields.get("username") === user && fields.get("password") === password;
+      return { status: 302, headers: { location: valid ? "/secure" : "/login", "set-cookie": `rack.session=${valid ? "authenticated" : "error"}; Path=/` } };
+    }
+    if (url.pathname === "/secure") return cookie.includes("rack.session=authenticated") ? { status: 200, body: '<a id="logout" href="/logout">Log Out</a>' } : { status: 302, headers: { location: "/login" } };
+    if (url.pathname === "/logout") return { status: 302, headers: { location: "/login", "set-cookie": "rack.session=loggedout; Path=/" } };
+    return { status: 404, body: "Not found" };
+  }, async () => {
+    const results = await executeCycle([
+      { id: "valid", automation_type: "playwright", steps: [
+        { action: "goto", value: "/login" }, { action: "fill", selector: "#username", value: "{{env:E2E_LOGIN_USER}}" }, { action: "fill", selector: "#password", value: "{{env:E2E_LOGIN_PASSWORD}}" },
+        { action: "click", selector: "#sign-in" }, { action: "expect_visible", selector: "#logout" }, { action: "expect_url", value: "/secure" },
+        { action: "click", selector: "#logout" }, { action: "expect_url", value: "/login" }, { action: "expect_text", selector: "#flash", value: "You logged out!" },
+      ] },
+      { id: "invalid", automation_type: "playwright", steps: [
+        { action: "goto", value: "/login" }, { action: "fill", selector: "#username", value: "{{env:E2E_LOGIN_USER}}" }, { action: "fill", selector: "#password", value: "{{env:E2E_INVALID_PASSWORD}}" },
+        { action: "click", selector: "#sign-in" }, { action: "expect_text", selector: "#flash", value: "Your password is invalid!" },
+      ] },
+    ], "https://8.8.8.8", { resolveSecret: name => ({ E2E_LOGIN_USER: user, E2E_LOGIN_PASSWORD: password, E2E_INVALID_PASSWORD: crypto.randomUUID() })[name] });
+    assert.deepEqual(results.map(result => result.status), ["passed", "passed"], JSON.stringify(results));
+    assert.ok(paths.includes("/secure") && paths.includes("/logout"));
+    assert.ok(!JSON.stringify(results).includes(password));
   });
 });
 
