@@ -24,6 +24,11 @@ test("AES-GCM payloads are distinct and bound to the run, project, and expiry", 
   assert.equal(encrypted.includes(config.validPassword), false);
   assert.notEqual(encrypted, encryptLoginConfig(config, context, key));
   assert.deepEqual(decryptLoginConfig(encrypted, context, key), config);
+  const databaseTimestamp = context.expiresAt.replace("Z", "+00:00");
+  assert.deepEqual(decryptLoginConfig(encrypted, { ...context, expiresAt: databaseTimestamp }, key), config);
+  const wholeSecond = { ...context, expiresAt: "2030-01-01T00:00:00.000Z" };
+  const wholeSecondPayload = encryptLoginConfig(config, wholeSecond, key);
+  assert.deepEqual(decryptLoginConfig(wholeSecondPayload, { ...wholeSecond, expiresAt: "2030-01-01T00:00:00+00:00" }, key), config);
   for (const altered of [{ ...context, runId: "run-two" }, { ...context, projectId: "project-two" }, { ...context, expiresAt: new Date(Date.now() + 90_000).toISOString() }]) {
     assert.throws(() => decryptLoginConfig(encrypted, altered, key));
   }
@@ -44,8 +49,11 @@ test("different runs resolve only their own values", () => {
 test("workflow dispatch includes only identifiers and reports do not read ciphertext", () => {
   const workflow = readFileSync(new URL("../.github/workflows/automation.yml", import.meta.url), "utf8");
   const route = readFileSync(new URL("../app/api/cycles/run/route.js", import.meta.url), "utf8");
+  const runner = readFileSync(new URL("../automation/runner.mjs", import.meta.url), "utf8");
   const report = readFileSync(new URL("../lib/cycle-report.mjs", import.meta.url), "utf8");
   assert.match(route, /inputs: \{ run_id: run\.id, project_id: body\.projectId, test_case_ids: ids\.join\(","\), source: "cycle" \}/);
   assert.doesNotMatch(workflow, /inputs:[\s\S]*?loginConfig/);
   assert.doesNotMatch(report, /ciphertext|loginConfig|validPassword|invalidPassword/);
+  assert.match(runner, /uses_run_login_config:run\.summary\?\.uses_run_login_config/);
+  assert.match(runner, /Cycle runner failed \(\$\{failureCode\}\)/);
 });
