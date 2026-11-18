@@ -50,4 +50,18 @@ Import the repository in Vercel, set the environment variables above, and deploy
 
 ## Automation step format
 
+### Local custom Test Cycles
+
+Start with `npm run dev`. Create a test case with **Automation type: Playwright** and this JSON in **Test steps**:
+
+```json
+[{"action":"check","value":"page_title"}]
+```
+
+Supported check values are `page_response`, `page_title`, `h1_heading`, `image_alt`, and `mobile_viewport`. A case may contain multiple check objects; all must pass. `h1_heading` requires exactly one H1 element with nonempty text. `image_alt` requires nonempty alt text, except decorative images explicitly marked with both `alt=""` and `role="presentation"` or `role="none"`. `mobile_viewport` requires `width=device-width`.
+
+Create a new cycle, explicitly select its cases, enter a public HTTP/HTTPS URL on **Test cycles**, and click **Run Cycle**. Results appear on the cycle card. Manual cases, empty definitions and unsupported actions appear as **Not Automated** (stored as `skipped`). A run passes only when every assigned case actually passes. Shared case statuses and the workspace scanner URL are never changed. No demo records are created automatically.
+
+The endpoint `/api/cycles/run` is disabled outside local development and on Vercel. It uses the existing Chromium installation, a 45-second execution deadline, and validates/pins public DNS addresses for browser requests, including redirects and subresources. It blocks local/private/reserved addresses, service workers and WebSockets. No new configuration is required. Results reuse the existing Supabase tables and your signed-in workspace permissions.
+
 Playwright/Selenium test cases store a JSON array in the `steps` field. Supported actions are `goto`, `fill`, `click`, `select`, `check`, `uncheck`, `expect_text`, `expect_url`, `expect_visible`, and `wait`. Each action uses `selector` and/or `value` as appropriate. Values may reference configured GitHub secrets using `{{env:E2E_NAME}}` syntax. Newman cases store a repository-relative `automation_file` path to a Postman collection JSON file.
