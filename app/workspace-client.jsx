@@ -13,9 +13,9 @@ import {
 } from "lucide-react";
 
 const navGroups = [
-  { label: "MONITOR", links: [["Overview", LayoutDashboard], ["Website Scanner", Play], ["Scan History", FileClock], ["Reports", Activity]] },
+  { label: "MONITOR", links: [["Overview", LayoutDashboard], ["Website Scanner", Play], ["Scan History", FileClock], /* ["Reports", Activity] */] },
   { label: "TOOLS", links: [["Automation", Command], ["Test cases", ListChecks], ["Test cycles", FlaskConical], ["Traceability", BookOpenCheck], ["Defects", Bug], ["Tasks", FolderKanban]] },
-  { label: "ACCOUNT", links: [["Workspace", Users], ["Settings", Settings2]] },
+  { label: "ACCOUNT", links: [["Workspace", Users], /* ["Settings", Settings2] */] },
 ];
 const statusOptions = ["pending", "in_progress", "passed", "failed", "blocked"];
 const pretty = value => (value || "").replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase());
