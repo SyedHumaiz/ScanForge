@@ -4,6 +4,8 @@ import { chromium } from "playwright";
 import { Builder, Browser, By, Key } from "selenium-webdriver";
 import chrome from "selenium-webdriver/chrome.js";
 import newman from "newman";
+import { executeCycle } from "../lib/cycle-runner.mjs";
+import { decryptLoginConfig, loginSecretValues } from "../lib/run-login-config.mjs";
 
 const api = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -77,6 +79,7 @@ const resolveValue = value => String(value ?? "").replace(/\{\{env:([A-Z0-9_]+)\
 });
 
 async function runPlaywright(testCase, baseUrl) {
+  const hasRunnerSecrets = (testCase.steps || []).some(step => /\{\{env:E2E_[A-Z0-9_]+\}\}/.test(String(step.value || "")));
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   try {
@@ -102,6 +105,7 @@ async function runPlaywright(testCase, baseUrl) {
     }
     return { passed: true, screenshot: null };
   } catch (error) {
+    if (hasRunnerSecrets) return { passed: false, error: "Browser action failed. Check the target, selectors, and runner secrets.", screenshot: null };
     let screenshot = null;
     try { screenshot = await page.screenshot({ fullPage: true }); } catch { /* Keep the original execution failure. */ }
     return { passed: false, error: error.message, screenshot };
@@ -244,10 +248,13 @@ async function scanWebsite(baseUrl) {
 }
 
 let run;
+let hasRunLoginConfig = false;
+let failureCode = "RUN_LOOKUP_FAILED";
 try {
   const matchingRuns = await rest("test_runs",{query:`?id=eq.${encodeURIComponent(runId)}&project_id=eq.${encodeURIComponent(projectId)}&select=*,projects(id,automation_base_url),test_results(id)`});
   [run] = matchingRuns || [];
   if (!run) {
+    failureCode = "RUN_NOT_FOUND";
     const visibleRuns = await rest("test_runs",{query:`?id=eq.${encodeURIComponent(runId)}&select=id,project_id`});
     const visibleRun = visibleRuns?.[0];
     const detail = visibleRun
@@ -256,10 +263,29 @@ try {
     console.error(`[ScanForge runner] Run lookup failed run_id=${runId} project_id=${projectId} visible_project_id=${visibleRun?.project_id || "none"}`);
     throw new Error(`${detail} Verify that GitHub Actions uses the same Supabase project as the dashboard and that SUPABASE_SERVICE_ROLE_KEY is the current service-role key.`);
   }
-  const baseUrl=run.projects?.automation_base_url;
+  const baseUrl=source === "cycle" ? run.summary?.target_url : run.projects?.automation_base_url;
+  failureCode = "TARGET_NOT_CONFIGURED";
   if (!baseUrl) throw new Error("Set the automation target URL in ScanForge workspace settings before starting a run.");
+  failureCode = "CASES_LOAD_FAILED";
   const cases=source === "website" ? [] : await rest("test_cases",{query:`?project_id=eq.${encodeURIComponent(projectId)}&id=in.(${caseIds.map(encodeURIComponent).join(",")})&select=*`});
   if(cases.length!==caseIds.length)throw new Error("One or more selected test cases are missing.");
+  let runSecrets = {};
+  if (source === "cycle") {
+    failureCode = "CONFIG_READ_FAILED";
+    const configs = await rest("run_login_configs", { query: `?run_id=eq.${encodeURIComponent(runId)}&project_id=eq.${encodeURIComponent(projectId)}&select=ciphertext,expires_at` });
+    if (configs.length) {
+      hasRunLoginConfig = true;
+      failureCode = "CONFIG_KEY_MISSING";
+      if (!process.env.RUN_CONFIG_ENCRYPTION_KEY) throw new Error("RUN_CONFIG_ENCRYPTION_KEY is missing from GitHub Actions secrets.");
+      failureCode = "CONFIG_EXPIRED";
+      if (Date.now() >= Date.parse(configs[0].expires_at)) throw new Error("Run login configuration has expired.");
+      failureCode = "DECRYPT_FAILED";
+      const config = decryptLoginConfig(configs[0].ciphertext, { runId, projectId, expiresAt: configs[0].expires_at }, process.env.RUN_CONFIG_ENCRYPTION_KEY);
+      runSecrets = loginSecretValues(config);
+    }
+    else if (run.summary?.uses_run_login_config) { failureCode = "CONFIG_NOT_FOUND"; throw new Error("This run's login configuration is unavailable or expired."); }
+  }
+  failureCode = "RUN_START_SAVE_FAILED";
   await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:"running",started_at:new Date().toISOString()},headers:{Prefer:"return=minimal"}});
   if (source === "website") {
     const checks = await scanWebsite(baseUrl);
@@ -270,6 +296,16 @@ try {
     const summary={total:checks.length,passed,failed,warnings,target_url:baseUrl,checks};
     await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:failed?"failed":"passed",finished_at:new Date().toISOString(),summary},headers:{Prefer:"return=minimal"}});
     console.info(`[ScanForge runner] Website scan completed total=${summary.total} passed=${summary.passed} failed=${summary.failed} warnings=${summary.warnings}`);
+  } else if (source === "cycle") {
+    failureCode = "PLAYWRIGHT_FAILED";
+    const results = await executeCycle(cases, baseUrl, { resolveSecret: name => runSecrets[name] || process.env[name] });
+    failureCode = "RESULTS_SAVE_FAILED";
+    await rest("test_results",{method:"POST",body:results.map(result=>({...result,run_id:runId}))});
+    const summary={execution:"local_cycle",target_url:baseUrl,uses_run_login_config:run.summary?.uses_run_login_config,total:results.length,passed:results.filter(x=>x.status==="passed").length,failed:results.filter(x=>x.status==="failed").length,skipped:results.filter(x=>x.status==="skipped").length,duration_ms:Date.now()-new Date(run.started_at||Date.now()).getTime()};
+    failureCode = "RUN_COMPLETE_SAVE_FAILED";
+    await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:summary.failed||summary.skipped?"failed":"passed",finished_at:new Date().toISOString(),summary},headers:{Prefer:"return=minimal"}});
+    console.info(`[ScanForge runner] Cycle completed total=${summary.total} passed=${summary.passed} failed=${summary.failed} skipped=${summary.skipped}`);
+    if(summary.failed||summary.skipped)process.exitCode=1;
   } else {
   const outcomes=[];
   for(const testCase of cases){
@@ -292,7 +328,11 @@ try {
   if(summary.failed)process.exitCode=1;
   }
 }catch(error){
-  console.error(error);
-  if(run?.id)try{await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}`,body:{status:"failed",finished_at:new Date().toISOString(),summary:{error:error.message}},headers:{Prefer:"return=minimal"}})}catch(updateError){console.error("Could not store runner failure:",updateError.message)}
+  const message = source === "cycle" ? `Cycle runner failed (${failureCode}).` : error.message;
+  console.error(`[ScanForge runner] ${message}`);
+  if(run?.id)try{await rest("test_runs",{method:"PATCH",query:`?id=eq.${encodeURIComponent(runId)}&project_id=eq.${encodeURIComponent(projectId)}`,body:{status:"failed",finished_at:new Date().toISOString(),summary:{execution:run.summary?.execution,target_url:run.summary?.target_url,uses_run_login_config:run.summary?.uses_run_login_config,error:message}},headers:{Prefer:"return=minimal"}})}catch{console.error("[ScanForge runner] RUN_FAILURE_SAVE_FAILED")}
   process.exitCode=1;
+} finally {
+  if (hasRunLoginConfig) try { await rest("run_login_configs", { method: "DELETE", query: `?run_id=eq.${encodeURIComponent(runId)}&project_id=eq.${encodeURIComponent(projectId)}`, headers: { Prefer: "return=minimal" } }); }
+  catch { console.error("[ScanForge runner] Could not delete run login configuration; it remains unusable after expiry."); }
 }

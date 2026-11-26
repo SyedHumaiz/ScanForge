@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { validateTestCaseId, testCaseWriteError } from "@/lib/test-case-id.mjs";
 
 export const dynamic = "force-dynamic";
 const resources = {
@@ -28,7 +29,9 @@ export async function PATCH(request, { params }) {
     const body = await request.json();
     const { supabase, error } = await authorize(body.project_id);
     if (error) return error;
-    const { data, error: dbError } = await supabase.from(config.table).update(pick(body, config.fields)).eq("id", id).eq("project_id", body.project_id).select("*").single();
+    const updates = pick(body, config.fields);
+    if (resource === "test-cases" && body.key !== undefined) updates.key = validateTestCaseId(body.key);
+    const { data, error: dbError } = await supabase.from(config.table).update(updates).eq("id", id).eq("project_id", body.project_id).select("*").single();
     if (dbError) throw dbError;
     if (resource === "cycles" && Array.isArray(body.test_case_ids)) {
       const { error: deleteError } = await supabase.from("cycle_test_cases").delete().eq("cycle_id", id);
@@ -48,6 +51,7 @@ export async function PATCH(request, { params }) {
     }
     return NextResponse.json({ item: data });
   } catch (error) {
+    if (resource === "test-cases") { const issue = testCaseWriteError(error); return jsonError(issue.message, issue.status); }
     return jsonError(error.message || "Unable to update record.", 400);
   }
 }
