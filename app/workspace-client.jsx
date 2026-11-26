@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 
 const navGroups = [
-  { label: "MONITOR", links: [["Overview", LayoutDashboard], ["Website Scanner", Play], ["Scan History", FileClock], ["Reports", Activity]] },
+  { label: "MONITOR", links: [["Overview", LayoutDashboard], ["Website Scanner", Play], ["Scan History", FileClock], /* ["Reports", Activity] */] },
   { label: "TOOLS", links: [["Automation", Command], ["Test cases", ListChecks], ["Test cycles", FlaskConical], ["Defects", Bug]] },
   { label: "ACCOUNT", links: [["Workspace", Users], ["Settings", Settings2]] },
 ];
